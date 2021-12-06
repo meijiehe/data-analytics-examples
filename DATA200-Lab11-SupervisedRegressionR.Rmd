@@ -1,0 +1,555 @@
+---
+title: "Lab 11 - Supervised Learning on AirBnB data"
+author: "Kyle M. Monahan"
+date: "November 10th, 2021"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+## Introduction
+
+This is our first session on machine learning that focuses on working with a real data set, taken from the **NYC Open Data Portal**. Our focus for this lab session is supervised learning, which we have some experience with from our previous labs. 
+
+## Goals
+
+We will gain experience with the following tasks:
+
+* Loading and exploring the dataset (AirBnB data from New York City's Open Data Portal)
+* Creating our supervised learning model (split the data, train, test, investigate, iterate)
+* Visualizing our results graphically 
+* Creating geo-spatial representations of the data (next time)
+* Looking over the exact same approach in Python (cool!)
+
+
+## Load the data 
+
+First, we might be tempted to load the data. But first we have to understand the context in which the data were collected - we need to look at the **metadata**. 
+
+### The dataset - NYC Open Data 
+
+This data was extracted from the website [Inside AirBnB](http://insideairbnb.com/) in late 2019. 
+
+Note that many people have worked with this data on [Kaggle](https://www.kaggle.com/dgomonov/new-york-city-airbnb-open-data), and drawing from example analyses and pushing them forward is an important part of data analytics and research in general. 
+
+>>> TASK: Navigate to the link below. Look through the active Kaggle notebooks at the link, and find two interesting analyses. Prepare for the group to report back the following: 1) What analysis did they do? 2) What did they find? 3) Any errors or assumptions that are invalid? 4) Any future work that they suggest?
+
+[Link for Task](https://www.kaggle.com/dgomonov/new-york-city-airbnb-open-data/notebooks)
+
+### Loading libraries 
+
+Note, if you are on a new version of RStudio, you'll have a yellow banner at the top to install packages, and you can click "Install".
+
+If you need to install packages manually, here is an approach:
+
+```{r}
+
+# List of all packages 
+load.lib<-c("tidyverse", "lubridate", "ggcorrplot","lattice","psych",
+"reshape2","car","caret","data.table","e1071","scales","stringr","gridGraphics","gridExtra","cowplot","lmtest","gvlma","mlbench")
+
+
+# Loop through the packages, check if not installed, if true, install with dependencies. 
+
+install.lib<-load.lib[!load.lib %in% installed.packages()]
+for(lib in install.lib) install.packages(lib,dependencies=TRUE)
+sapply(load.lib,require,character=TRUE)
+
+```
+
+On Kaggle, you may find a wide variety of libraries that you have never seen before, like this example I pulled from a Kaggle notebook:
+
+```{r}
+library(tidyverse)
+library(lubridate)
+library(ggcorrplot)
+library(lattice)
+library(psych)
+library(reshape2)
+library(car)
+library(caret)
+library(data.table)
+library(e1071) 
+library(scales)
+library(stringr)
+library(gridGraphics)
+library(gridExtra)
+library(cowplot)
+library(lmtest)
+library(gvlma)
+library(mlbench)
+
+```
+
+When I come across libraries I haven't seen, I like to look into them and label them, so I remember for future use. Like this:
+
+```{r}
+library(tidyverse)        # Import the tidyverse for a collection 
+library(lubridate)        # Work with dates
+library(ggcorrplot)       # Correlation plots in ggplot 
+library(lattice)          # Trelis graphics in R 
+library(psych)            # Package for common psychometric analyses
+library(reshape2)         # Reshape data 
+library(car)              # Companion to applied regression
+library(caret)            # A great classification package
+                          # Classification And REgression Training
+library(data.table)       # Good for reading in and viewing data 
+library(e1071)            # Misc. functions in statistics 
+library(scales)           # Good for scaling and converting data
+library(stringr)          # Stringi C library manipulation of text
+library(gridGraphics)     # Low-level graphics support
+library(gridExtra)        # Additional grid graphics functions
+library(cowplot)          # Added functions to ggplot 
+                          # Similar to ggpubr 
+library(lmtest)           # linear regression and diagnostics
+library(gvlma)            # Global validation of lm - Pena et al 2006
+library(mlbench)          # ML benchmarks from UCI 
+```
+
+
+>>> TASK: Look into one of the packages, and tell me what it does - don't just repeat what I say above, but tell me how you would summarize it. 
+
+### Load data 
+
+Now we can load the data. We use the `read_csv` function inside of `readr` as it's much faster due to C bindings. 
+
+```{r}
+
+bnb_data <- readr::read_csv("Data/AB_NYC_2019.csv");
+
+```
+
+### Organize our data
+
+We need to organize our variables into outcomes and predictors. In machine learning, these are commonly referred to as target and  feature variables. 
+
+Note that it is always important to consider what your outcome is first - we want to know what our expected relationship is before we start looking at the data. 
+
+#### Look at the data first 
+
+In this case, I am interested in the price of AirBnB's, as I actually lived in New York for a time and I would like to visit again. What areas are the most expensive? Why are they more or less expensive? 
+
+
+Before organizing our data, we should get a handle on the content of the data. 
+
+```{r}
+head(bnb_data,4)
+```
+
+We can see we have price. Let's say we wanted to generate a model of the price of AirBnB housing, using the other features as predictors, to address my question above. There are many examples of this online, so you might want to push this forward in a some way for your own work. We always want to **go beyond what we see in examples**, to produce something new and novel.
+
+For this, we are going to use **price** as our target or outcome, and the rest of the variables as our features. We may not want to include all variables, depending on our model choice. 
+
+#### Sensitive data 
+
+We drop the fields `name`, `host_id`, and `host_name`. These could have sensitive information, so we don't want to include these in our model. Also, we don't really want to predict these, so we drop them. 
+
+
+### Other data
+
+We could also remove `reviews_per_month` as we already have a variable for the number of reviews, and I'm not interested in that level of detail for this analysis. It's optional, so I will leave it in.
+
+
+```{r}
+
+# Goal: Put the outcome (target) first - price 
+# Then, follow up with the predictors. We drop sensitive data.
+
+bnb_sub <- bnb_data %>% dplyr::select(price, 
+                    id,
+                    neighbourhood_group,
+                    neighbourhood,                 
+                    latitude, 
+                    longitude,                     
+                    room_type,
+                    minimum_nights, 
+                    number_of_reviews, 
+                    reviews_per_month,
+                    last_review, 
+                    calculated_host_listings_count,
+                    availability_365)
+head(bnb_sub, 4)
+
+```
+
+Now we have organized our initial data set. We see some `NA` values though, so we still need to clean our data.
+
+```{r}
+bnb_sub <- bnb_sub %>% 
+  mutate(reviews_per_month = replace_na(reviews_per_month, 0))
+
+# Use gsub to replace - with "" to extract the number
+bnb_sub$last_review <- as.integer(gsub("-", "", bnb_sub$last_review))
+
+# Use the same mutate approach again 
+bnb_sub <- bnb_sub %>% 
+  mutate(last_review = replace_na(last_review, 0),)
+
+# Check that we have no missing values 
+paste0(sum(is.na(bnb_sub))) 
+
+```
+
+>>> TASK: What does replace_na do here? What alternatives could we use for replace_na? 
+
+
+### Note on missing values 
+
+Sometimes we might want to keep the missing values, or deal with them in a different way. Dropping them isn't always a good idea! 
+
+In this case, we are assuming AirBnB observations in this dataset with no reviews via the API actually have zero reviews, which is the case. However, you must think twice about how you will deal with missing data. 
+
+### Check data types
+
+We always need to get that our data are stored correctly (again). Double checking these things now will save time later. 
+
+```{r}
+
+# We can use sapply to run the class argument to find how the data are store in a columnar way 
+sapply(bnb_sub, class)
+
+``` 
+
+
+The `neighbourhood` columns are character, but really should be a factor. Let's fix that. 
+
+```{r}
+# Have to change some of these to factors, R prefers factors 
+
+# Store the columns you want in a list, can also use colnames()
+columns <- c("neighbourhood_group","neighbourhood","room_type")
+
+# Use lapply to apply the as.factor command to all of the columns that match the select criteria 
+bnb_sub[, columns] <- bnb_sub %>% select(all_of(columns)) %>% lapply(as.factor)
+
+# Check to confirm columns are factors 
+bnb_sub %>% select(all_of(columns)) %>% str()
+```
+
+We can run the same command again, to double check.
+
+```{r}
+sapply(bnb_sub, class)
+
+```
+
+Much better. 
+
+### Visualize the data - price 
+
+Now we want to understand our data a bit more. To do this, we will visualize the data.
+
+
+```{r}
+
+g <- bnb_sub %>% 
+  ggplot(aes(price)) + geom_histogram(col = "black", bins = 50) +
+  labs(title = "NYC AirBnB Price", 
+       x = "Price, USD", y = "Number of Rentals") +
+  theme_bw(base_size = 16) + scale_x_continuous(labels = dollar)
+
+g
+
+```
+
+We may also wish to split the data by neighboorhood. 
+
+```{r}
+
+g2 <- ggplot(bnb_sub, aes(fct_reorder(neighbourhood_group, price), price)) +
+  geom_boxplot(fill = "black") + 
+  labs(title = "Price by Neighborhood Group",
+       x = "", y = "Price, USD") + theme_bw(base_size = 16) +
+  scale_y_continuous(labels = dollar)
+
+g3 <- bnb_sub %>% filter(price < 1000) %>%
+ggplot(aes(fct_reorder(neighbourhood_group, price), price)) + 
+  geom_boxplot(fill = "black") + 
+  labs(title = "Price by Neighborhood Group, < $1000",
+       x = "", y = "Price, USD") + theme_bw(base_size = 16) +
+  scale_y_continuous(labels = dollar)
+
+# Organize the plots in one figure - gridExtra
+plot_grid(g2,g3, ncol = 1, nrow = 2)
+
+```
+
+It's clear there are a lot of outliers in this data. There are lots of ways to handle this. Let's look at a measure of the skewness. 
+
+```{r}
+
+# > 1 is strong right skew 
+skewness(bnb_sub$price)
+
+# Filter the cheaper ones 
+bnb_1k <- bnb_sub %>% filter(price < 1000)
+
+skewness(bnb_1k$price)
+```
+
+It's better when we remove the outliers, but remember that decreases the validity of our model! 
+
+We can try a Q-Q plot, another measure of normality. 
+
+```{r}
+qqnorm(bnb_sub$price);qqline(bnb_sub$price)
+qqnorm(bnb_1k$price); qqline(bnb_1k$price)
+```
+
+Both are still not normal. We may want to take log price as our outcome, or think about what we are trying to model here. 
+
+We can also remove those outlier prices. However, this has strong implications for the validity of our analysis. 
+
+We can filter into quantile ranges, as below: 
+
+```{r}
+
+# Find the quantiles 
+quant <- quantile(bnb_sub$price, probs=c(.25, .75), na.rm = T)
+# Find the IQR 
+iqr_sub <- IQR(bnb_sub$price, na.rm = T)
+
+bnb_sub2 <- bnb_sub %>% filter(price > (quant[1] - 1.5*iqr_sub) & 
+                       price < (quant[2] + 1.5*iqr_sub))  
+```
+
+
+### Compare the pre and post data 
+
+```{r}
+boxplot(bnb_sub$price, col = "black", horizontal = T, 
+        main = "Price, USD - RAW")
+boxplot(bnb_sub2$price, col = "white", horizontal = T, 
+        main = "Price, USD - Removed Outliers")
+```
+### Correlations 
+
+We may with to know how correlated variables are with others. We can use this with `corplot`.
+
+```{r}
+
+# Take the source data 
+c1 <- bnb_sub2
+
+cols <- c("neighbourhood_group", "neighbourhood", "room_type")
+c1[, cols] <- c1 %>% select(all_of(cols)) %>% lapply(as.numeric)
+
+corr <- round(cor(c1, use="complete.obs"), 2)
+ggcorrplot(corr, lab = TRUE, colors = c("aquamarine", "white", "dodgerblue"), 
+           show.legend = F, outline.color = "gray", type = "upper", 
+           tl.cex = 15, lab_size = 1.5, sig.level = 0.1,
+          title = "Correlation Matrix") +
+  labs(fill = "Correlation") + 
+  theme(axis.text.x = element_text(size=4,margin=margin(-2,0,0,0)),  
+        axis.text.y = element_text(size=4,margin=margin(0,-2,0,0)),
+        panel.grid.major=element_blank())
+```
+
+
+### Deeper dive 
+
+We can look deeper into these relationships with the `pairs.panels`.
+
+```{r}
+
+# Columns to select
+cols_sel <- c("price", "room_type", "longitude", "neighbourhood")
+
+# Extract from data 
+data_sel <- c1 %>% select(all_of(cols_sel))
+
+# Find correlation matrix 
+cor_sel <- cor(data_sel)
+
+pairs.panels(cor_sel, hist.col = 'grey', stars = T, cex.cor = .8)
+```
+
+For documentation on these, see here:
+
+https://www.rdocumentation.org/packages/psych/versions/2.0.9/topics/pairs.panels
+
+
+We also can check for colinearity in the predictors, as below: 检查共线性
+
+```{r}
+# Remove the outcome
+bnb_sub_pred <- subset(bnb_sub2, select = -c(price))
+
+# Remove all non-numerics 
+numeric_cols <- unlist(lapply(bnb_sub_pred, is.numeric)) # Logical vector of TRUE FALSE to include 
+bnb_sub_pred <- bnb_sub_pred[ , numeric_cols] # Classic slicing 
+
+# Find correlation matrix of predictors only
+bnb_sub_cor <- cor(bnb_sub_pred)
+
+# Pass to find Correlation with a cutoff of 0.7 
+cor_sub = findCorrelation(bnb_sub_cor, cutoff=0.7)
+
+# Select the columns which are above the cutoff 
+corsub_col = colnames(bnb_sub_pred)[cor_sub] 
+
+corsub_col # last_review is too highly correlated 
+```
+
+>>> TASK: Find another approach to identifying colinearity in R. Note the package, and the general steps to take that approach. 
+
+### Split into test and train 
+
+Now we can split into test and training data, which we have seen before. 
+
+```{r}
+# Set the size you would like 
+n <- floor(0.75 * nrow(bnb_sub2)) # 75% of the total obs 
+
+## Set seed and sample 
+set.seed(123)
+
+# Sample the raw data based on the calculated size
+train_ind <- sample(seq_len(nrow(bnb_sub2)), size = n)
+
+# Sample for training and test 
+train_bnb <- bnb_sub2[train_ind, ]
+test_bnb <- bnb_sub2[-train_ind, ]
+
+```
+
+### Splitting the data 
+
+You can also split via the `caret` package. 
+
+```{r}
+# Source: 
+# https://cran.r-project.org/web/packages/caret/vignettes/caret.html
+
+set.seed(123)
+
+inTrain <- createDataPartition(
+  y = bnb_sub2$price,
+  ## the outcome 
+  p = 0.75,
+  ## The percentage in training
+  list = FALSE
+)
+
+## The output is a set of integers for the rows of bnb_sub2
+## that belong in the training set.
+
+# Check the dimensions of the selection
+dim(bnb_sub2[as.vector(inTrain),])
+
+train_bnb2 <- bnb_sub2[as.vector(inTrain),]
+test_bnb2 <- bnb_sub2[-as.vector(inTrain),]
+
+```
+
+Note how they do (almost) the same thing! 
+
+>>> TASK: Read through the documentation here: https://topepo.github.io/caret/data-splitting.html What approach to splitting data could be used for comparing patients across hospitals?
+
+
+## Create the model 
+
+Now we can create an initial model. 
+
+>>> TASK: What variables would you want to choose to include in the model? Why? Include at least three variables, and justify it given our output so far.  
+
+It's sometimes useful to lay out our variables in new lines, so we can easily comment and uncomment variables to add and remove them. 
+
+```{r}
+# train data
+mod_1 <-lm(price ~ 
+          #id + 
+          neighbourhood_group + 
+          #neighbourhood +                 
+          latitude +  
+          #longitude +                      
+          room_type +                                               
+          #minimum_nights + 
+          #number_of_reviews +            
+          #last_review + 
+          #reviews_per_month +             
+          #calculated_host_listings_count +
+          #availability_365 +
+          (room_type * latitude), 
+        data = train_bnb)
+
+summary(mod_1)
+```
+A few things to note:
+
+1. We might want to investigate other interaction terms, or choose a better model design to account for this. 
+2. We haven't addressed the spatial variance of this model - there are spatial regression approaches which would be much better suited. 
+3. We need to look at model diagnostics here. 
+
+
+### Model diagnostics 
+
+```{r}
+par(mfrow = c(2,2)); plot(mod_1)
+```
+
+### Model statistics 
+
+It would be nice to quantify some of these hard to read graphics. We can do that as follows:
+
+```{r}
+
+# Extract R2 from model output 
+paste0("Adjusted R-Squared = ", as.numeric(summary(mod_1)[9]))
+
+# Calculate MSE
+paste0("MSE = ", mean(mod_1$residuals^2))
+
+# Run an outlier test 
+outliers <- outlierTest(mod_1) # Provides a bonferroni p for each  
+paste0(outliers$signif," ", outliers$bonf.p)
+```
+
+
+### Testing data 
+
+Now we need to apply the same approach on the testing data, to see how it performs out of sample. 
+
+```{r}
+# test data 的rmse
+# Find predictions from our model on the test data
+predict_mod_1 <- predict(mod_1, newdata = test_bnb)
+
+# Find the RMSE of these predictions, given the observed prices 
+
+# Here's a function, since you'll do this often 
+RMSE = function(predict_val, true_val){
+  sqrt(mean((predict_val - true_val)^2))
+}
+
+# Call the function 
+rmse = RMSE(predict_val = predict_mod_1, true_val = test_bnb$price)
+
+# Print it out 
+paste0("RMSE = ", rmse)
+```
+
+
+
+```{r}
+#比较predicted y 和actual y in test data
+par(mfrow=c(1,1))
+plot(test_bnb$price, exp(predict_mod_1))
+```
+
+It's clear there are some issues with our model. 
+
+### Interesting GIS approaches 
+
+You'll note that if you plot the latitude and longitude, it looks a lot like a map. Truthfully, we haven't adjusted for the spatial variation in this data, and it's a common shortcoming of these approaches. We should use a pooling or clustering method, or even a spatially-explicit regression model, to fully account for this. 
+
+```{r}
+
+library(ggplot2)
+
+almost_map <- ggplot(data = bnb_1k, mapping = aes(x=longitude, y=latitude)) + geom_point(aes(color=price))
+
+almost_map
+```
+
+We will go more deeply into this during the next session.  
